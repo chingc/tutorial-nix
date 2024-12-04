@@ -1,8 +1,12 @@
-# Nix
+# README: Nix
 
 Hello, this is a record of my journey learning [Nix](https://nixos.org).
 
-I'm writing this mainly as a quickstart and quick reference for my future self, but I hope others find it helpful.
+I'm writing this mainly as a quickstart and reference for my future self, but I hope others find it helpful.
+
+This is not comprehensive. It will just go over the basics and some of the more useful features.
+
+Note: This doc will be using the newer `nix` cli interface and flakes.
 
 ## What is it?
 
@@ -21,13 +25,13 @@ zsh: command not found: python
 $ nix shell nixpkgs#go nixpkgs#nodejs nixpkgs#python3
 
 $ go version
-go version go1.22.3 darwin/arm64
+go version go1.23.3 darwin/arm64
 
 $ node --version
-v20.12.2
+v20.18.0
 
-$ python -V
-Python 3.11.9
+$ python --version
+Python 3.12.7
 
 $ exit
 
@@ -85,7 +89,7 @@ This script fetches XML content from a URL, converts it to JSON, and formats it 
 
 It requires curl, xml2json, jq, and bash. If any of these dependencies are not present on the system running the script, it will fail partially or altogether.
 
-With Nix, we can declare all dependencies explicitly, and produce a script that will always run on any machine that supports Nix.
+With Nix, we can declare all dependencies explicitly, and produce a script that will always run on any machine that has Nix.
 
 ```bash
 #! /usr/bin/env nix
@@ -104,7 +108,7 @@ As long as the system has Nix, scripts can be written in any language without wo
 
 ```bash
 #! /usr/bin/env nix
-#! nix shell nixpkgs/e2dd4e18cc1c7314e24154331bae07df76eb582f#python312
+#! nix shell nixpkgs/nixos-24.11#python3
 #! nix --ignore-environment --command python
 
 print("n", "n^2")
@@ -112,7 +116,7 @@ for n in range(1, 10):
     print(n, n * n)
 ```
 
-In this example we've included a git commit hash of the Nixpkgs repository. This ensures that the script will always run with the exact same package versions, everywhere.
+In this example we've specified the `nixos-24.11` stable channel. This helps reproducibility. You can even use a git commit hash of the Nixpkgs repository for further granularity.
 
 ## Declarative Shell Environments
 
@@ -122,44 +126,40 @@ Create a `flake.nix` file:
 
 ```
 {
-  description = "A fun shell environment";
+    description = "A fun shell environment";
 
-  # Pin to a specific commit for reproducibility
-  inputs.nixpkgs.url = "nixpkgs/e2dd4e18cc1c7314e24154331bae07df76eb582f";
+    inputs = {
+        nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+        flake-utils.url = "github:numtide/flake-utils";
+    };
 
-  inputs.flake-utils.url = "github:numtide/flake-utils";
+    outputs = { self, nixpkgs, flake-utils }:
+        flake-utils.lib.eachDefaultSystem (system:
+            let
+                pkgs = import nixpkgs { inherit system; config = {}; overlays = []; };
+            in {
+                devShells.default = pkgs.mkShellNoCC {
 
-  outputs = { self, nixpkgs, flake-utils }:
+                    # Packages to include
+                    packages = with pkgs; [
+                        cowsay
+                        lolcat
+                        python3Full
+                    ];
 
-    flake-utils.lib.eachDefaultSystem (system:
+                    # Define environment variables
+                    env = {
+                        GREETING = "Hello, Nix!";
+                    };
 
-      let
+                    # Run a shell script on environment startup
+                    shellHook = ''
+                        echo $GREETING | cowsay | lolcat
+                    '';
 
-        pkgs = import nixpkgs { inherit system; config = {}; overlays = []; };
-
-      in {
-
-        devShells.default = pkgs.mkShellNoCC {
-          # Packages to include
-          packages = with pkgs; [
-            cowsay
-            lolcat
-          ];
-
-          # Define environment variables
-          env = {
-            GREETING = "Hello, Nix!";
-          };
-
-          # Run a shell script on environment startup
-          shellHook = ''
-            echo $GREETING | cowsay | lolcat
-          '';
-        };
-
-      }
-
-    );
+                };
+            }
+        );
 }
 ```
 
@@ -173,21 +173,9 @@ If you make changes to `flake.nix` just `exit` or `Ctrl-D` to exit the environme
 
 Without pinning or locking your tools and dependencies to specific versions you'll eventually hit the point of development where a bug is affecting others but somehow it "works on my machine". It's often very unpleasant and very difficult to debug.
 
-We've already seen a few examples of version pinning by using the git commit hash of the Nixpkgs repository. There are several places where you can find these hashes.
+We've seen from an earlier example how to pin to a specific Nix channel. The channels can be found at [status.nixos.org](https://status.nixos.org).
 
-Go to [status.nixos.org](https://status.nixos.org) for the latest commits to the official Nix channels.
-
-If you are looking for an older version of a program that isn't in the current channels, that could be a little tricky.
-
-For example, the package `nginx` currently points to v1.26.0 in the unstable channel and v1.24.0 in the 23.11 channel. However, if you need the commit hash that contains nginx v1.22.1, then the easiest place to find it is from an unofficial source called [Nix Package Versions](https://lazamar.co.uk/nix-versions/).
-
-The alternative is to look for it in [Hydra](https://hydra.nixos.org), the NixOS build system. This method can be slow, difficult, and unsuccessful. Check out this [forum thread](https://discourse.nixos.org/t/steps-to-find-a-commit-with-cached-version-of-package/5674) to get an overview on how to navigate Hydra.
-
-I'd like to hear from you if you have better suggestions on how to lookup commits for older packages.
-
-With that out of the way, let's recap how to version pin.
-
-tbd
+Tip: [Which channel branch should I use?](https://nix.dev/concepts/faq#which-channel-branch-should-i-use)
 
 ## Search for Packages
 
@@ -203,6 +191,10 @@ The key difference between wrapped and unwrapped packages in NixOS is that wrapp
 
 In most cases, users should install the wrapped version of a package, as it is preconfigured to work correctly on NixOS. The unwrapped version is primarily used when further customization or overriding of the package is required, as it serves as the base for creating a new wrapped derivation with additional modifications.
 
+## Thoughts
+
+tbd
+
 ## References
 
 Below are some of the main sources I've used.
@@ -210,20 +202,18 @@ Below are some of the main sources I've used.
 - [GitHub: DeterminateSystems/nix-installer](https://github.com/DeterminateSystems/nix-installer)
 - [GitHub: NixOS/nix](https://github.com/NixOS/nix)
 - [GitHub: NixOS/nixpkgs](https://github.com/NixOS/nixpkgs)
-- [Nix Reference Manual: nix search](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-search)
-- [Nix Reference Manual: nix shell](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-shell)
 - [Nix Reference Manual: nix run](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-run)
-- [Nix Package Versions](https://lazamar.co.uk/nix-versions/)
-- [NixOS Hydra](https://hydra.nixos.org)
-- [NixOS Search Packages](https://search.nixos.org/packages)
-- [NixOS Status](https://status.nixos.org)
+- [Nix Reference Manual: nix search](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-search)
+- [Nix Reference Manual: nix shell](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-env-shell)
 - [nix.dev](https://nix.dev)
+- [nix.dev: Best Practices](https://nix.dev/guides/best-practices)
 - [Zero to Nix](https://zero-to-nix.com)
-
-Other notable sources:
-
-- [Kubukoz Blog: Nix Flakes First Steps](https://blog.kubukoz.com/flakes-first-steps/)
 
 Additional resources:
 
-- <https://nixos.org/learn>
+- [Kubukoz Blog: Nix Flakes First Steps](https://blog.kubukoz.com/flakes-first-steps/)
+- [Nix Package Versions](https://lazamar.co.uk/nix-versions/)
+- [NixOS Hydra](https://hydra.nixos.org)
+- [NixOS Learn](https://nixos.org/learn)
+- [NixOS Search Packages](https://search.nixos.org/packages)
+- [NixOS Status](https://status.nixos.org)
